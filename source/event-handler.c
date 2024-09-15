@@ -1,5 +1,6 @@
 #include "event-handler.h"
 
+#include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <threads.h>
@@ -126,6 +127,9 @@ int event_handler_add(EventHandler handler,
 	}
 
 	list_add(&worker->events, &object->list);
+	worker->nobject++;
+
+	printf("event_handler: add %d to %ld\n", fd, worker->tid % 10000);
 
 	return 0;
 }
