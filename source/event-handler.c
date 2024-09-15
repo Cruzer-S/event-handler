@@ -92,6 +92,8 @@ EventHandler event_handler_create(void)
 	handler = malloc(sizeof(struct event_handler));
 	if (handler == NULL)
 		goto RETURN_NULL;
+
+	handler->callback = NULL;
 	
 	return handler;
 
@@ -183,7 +185,10 @@ static int event_worker(void *arg)
 		for (int i = 0; i < ret; i++) {
 			EventObject object = events[i].data.ptr;
 
-			object->callback(object->fd, object->arg);
+			if (object->callback)
+				object->callback(object->fd, object->arg);
+			else if (handler->callback)
+				handler->callback(object->fd, object->arg);
 		}
 	}
 
