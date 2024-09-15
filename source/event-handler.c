@@ -1,6 +1,5 @@
 #include "event-handler.h"
 
-#include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <threads.h>
@@ -129,22 +128,26 @@ int event_handler_add(EventHandler handler,
 	list_add(&worker->events, &object->list);
 	worker->nobject++;
 
-	printf("event_handler: add %d to %ld\n", fd, worker->tid % 10000);
-
 	return 0;
 }
 
 int event_handler_del(EventHandler handler, int fd)
 {
 	EventObject object = find_object_from(handler, fd);
+	EventWorker worker;
+
 	if (object == NULL)
 		return -1;
 
-	if (epoll_ctl(object->worker->epfd, EPOLL_CTL_DEL, fd, 0) == -1)
+	worker = object->worker;
+
+	if (epoll_ctl(worker->epfd, EPOLL_CTL_DEL, fd, 0) == -1)
 		return -1;
 
 	list_del(&object->list);
 	free(object);
+
+	worker->nobject--;
 
 	return 0;
 }
@@ -173,7 +176,7 @@ static int event_worker(void *arg)
 
 	while (handler->state == EVENT_HANDLER_RUNNING)
 	{
-		int ret = epoll_wait(worker->epfd, events, MAX_EVENTS, -1);
+		int ret = epoll_wait(worker->epfd, events, MAX_EVENTS, 5);
 		if (ret == -1)
 			goto CLOSE_EPOLL;
 
@@ -182,6 +185,13 @@ static int event_worker(void *arg)
 
 			object->callback(object->fd, object->arg);
 		}
+	}
+
+	LIST_FOREACH_ENTRY_SAFE(&worker->events, object, struct event_object, list) {
+		list_del(&object->list);
+		free(object);
+
+		worker->nobject--;
 	}
 
 	close(worker->epfd);
