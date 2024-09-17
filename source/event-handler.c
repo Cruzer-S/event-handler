@@ -111,7 +111,7 @@ FREE_HANDLER:	free(handler);
 RETURN_NULL:	return NULL;
 }
 
-int event_handler_add(EventHandler handler,
+int event_handler_add(EventHandler handler, bool edge_trigger,
 		      int fd, void *arg, EventCallback callback)
 {
 	struct epoll_event event;
@@ -126,7 +126,7 @@ int event_handler_add(EventHandler handler,
 	object->arg = arg;
 	object->callback = callback;
 
-	event.events = EPOLLIN;
+	event.events = EPOLLIN || ((edge_trigger) ? EPOLLET : 0);
 	event.data.ptr = object;
 
 	mtx_lock(&handler->lock);
