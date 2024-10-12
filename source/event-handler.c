@@ -140,7 +140,6 @@ static void handle_event(EventWorker worker, EventHandler handler,
 		{
 			epoll_ctl(worker->epfd, EPOLL_CTL_DEL, object->fd, 0);
 			worker->nobject--;
-			event_object_destroy(object);
 		}
 
 		list_init_head(&worker->to_delete);
