@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <threads.h>
+#include <errno.h>
 
 #include <unistd.h>
 
@@ -33,9 +34,11 @@ typedef struct event_worker {
 	EventHandler handler;
 
 	struct list object_list;
+
 	struct list to_delete;
-	int nobject;
 	mtx_t lock;
+
+	int nobject;
 
 	int epfd;
 	int evfd;
@@ -44,53 +47,26 @@ typedef struct event_worker {
 	EventWorkerstate state;
 } *EventWorker;
 
-typedef struct event_object {
+struct event_object {
 	EventWorker worker;
 
 	int fd;
+	bool edge_triggered;
+
+	EventCallback callback;
 	void *arg;
 
 	struct list list;
-
-	EventCallback callback;
-} *EventObject;
+};
 
 struct event_handler {
 	struct event_worker worker[MAX_WORKER];
-	mtx_t lock;
 
 	EventCallback callback;
+	unsigned int next_worker;
 
 	EventHandlerstate state;
 };
-
-static EventWorker find_least_object_worker(EventHandler handler)
-{
-	EventWorker least = &handler->worker[0];
-
-	for (int i = 1; i < MAX_WORKER; i++) {
-		if (handler->worker[i].nobject < least->nobject)
-			least = &handler->worker[i];
-	}
-
-	return least;
-}
-
-static EventObject find_object(EventHandler handler, int fd)
-{
-	EventWorker worker;
-
-	for (int i = 0; i < MAX_WORKER; i++) {
-		worker = &handler->worker[i];
-
-		LIST_FOREACH_ENTRY(&worker->object_list, object,
-		     		   struct event_object, list)
-			if (object->fd == fd)
-				return object;
-	}
-
-	return NULL;
-}
 
 EventHandler event_handler_create(void)
 {
@@ -101,9 +77,7 @@ EventHandler event_handler_create(void)
 		goto RETURN_NULL;
 
 	handler->callback = NULL;
-
-	if (mtx_init(&handler->lock, mtx_plain) == -1)
-		goto FREE_HANDLER;
+	handler->next_worker = 0;
 	
 	return handler;
 
@@ -111,54 +85,33 @@ FREE_HANDLER:	free(handler);
 RETURN_NULL:	return NULL;
 }
 
-int event_handler_add(EventHandler handler, bool edge_trigger,
-		      int fd, void *arg, EventCallback callback)
+int event_handler_add(EventHandler handler, EventObject object)
 {
-	struct epoll_event event;
-	EventObject object;
 	EventWorker worker;
+	struct epoll_event event = {
+		.events = EPOLLIN || ((object->edge_triggered) ? EPOLLET : 0),
+		.data.ptr = object
+	};
 
-	object = malloc(sizeof(struct event_object));
-	if (object == NULL)
-		return -1;
-
-	object->fd = fd;
-	object->arg = arg;
-	object->callback = callback;
-
-	event.events = EPOLLIN || ((edge_trigger) ? EPOLLET : 0);
-	event.data.ptr = object;
-
-	mtx_lock(&handler->lock);
-	
-	worker = find_least_object_worker(handler);
+	handler->next_worker = (handler->next_worker + 1) % MAX_WORKER;
+	worker = &handler->worker[handler->next_worker];
 
 	object->worker = worker;
 
-	int retval = epoll_ctl(worker->epfd, EPOLL_CTL_ADD, fd, &event);
-	if (retval == -1) {
-		free(object);
-		mtx_unlock(&handler->lock);
+	int retval = epoll_ctl(worker->epfd, EPOLL_CTL_ADD,
+			       object->fd, &event);
+	if (retval == -1)
 		return -1;
-	}
 	
 	list_add(&worker->object_list, &object->list);
 	worker->nobject++;
 
-	mtx_unlock(&handler->lock);
-
 	return 0;
 }
 
-int event_handler_del(EventHandler handler, int fd)
+int event_handler_del(EventHandler handler, EventObject object)
 {
-	EventObject object;
 	EventWorker worker;
-
-	mtx_lock(&handler->lock);
-
-	if ((object = find_object(handler, fd)) == NULL)
-		goto UNLOCK_MUTEX;
 
 	worker = object->worker;
 
@@ -170,14 +123,9 @@ int event_handler_del(EventHandler handler, int fd)
 
 	mtx_unlock(&worker->lock);
 
-	mtx_unlock(&handler->lock);
-
 	eventfd_write(worker->evfd, 1);
 	
 	return 0;
-
-UNLOCK_MUTEX:	mtx_unlock(&handler->lock);
-		return -1;
 }
 
 static void handle_event(EventWorker worker, EventHandler handler,
@@ -192,7 +140,7 @@ static void handle_event(EventWorker worker, EventHandler handler,
 		{
 			epoll_ctl(worker->epfd, EPOLL_CTL_DEL, object->fd, 0);
 			worker->nobject--;
-			free(object);
+			event_object_destroy(object);
 		}
 
 		list_init_head(&worker->to_delete);
@@ -204,9 +152,9 @@ static void handle_event(EventWorker worker, EventHandler handler,
 	object = event->data.ptr;
 
 	if (object->callback)
-		object->callback(object->fd, object->arg);
+		object->callback(object);
 	else if (handler->callback)
-		handler->callback(object->fd, object->arg);
+		handler->callback(object);
 }
 
 static int event_worker(void *arg)
@@ -245,11 +193,19 @@ static int event_worker(void *arg)
 	if (handler->state == EVENT_HANDLER_ERROR)
 		goto DESTROY_MTX;
 
+	printf("start worker thread(%ld) - epfd: %d - evfd: %d\n",
+		thrd_current() % 10000, worker->epfd, worker->evfd
+	);
+
 	while (handler->state == EVENT_HANDLER_RUNNING)
 	{
 		int ret = epoll_wait(worker->epfd, events, MAX_EVENTS, -1);
-		if (ret == -1)
+		if (ret == -1) {
+			if (errno == EINTR)
+				continue;
+
 			goto DESTROY_MTX;
+		}
 
 		for (int i = 0; i < ret; i++)
 			handle_event(worker, handler, events + i);
@@ -259,7 +215,7 @@ static int event_worker(void *arg)
 			 	struct event_object, list)
 	{
 		list_del(&object->list);
-		free(object);
+		event_object_destroy(object);
 		worker->nobject--;
 	}
 
@@ -276,7 +232,6 @@ EPOLL_DEL:	epoll_ctl(worker->epfd, EPOLL_CTL_DEL, worker->evfd, NULL);
 CLOSE_EVENT:	close(worker->evfd);
 CLOSE_EPOLL:	close(worker->epfd);
 SET_ERR_STATE:	worker->state = EVENT_WORKER_ERROR;
-	printf("failed to start event_worker\n");
 RETURN_ERR:	return -1;
 }
 
@@ -343,7 +298,6 @@ int event_handler_stop(EventHandler handler)
 
 void event_handler_destroy(EventHandler handler)
 {
-	mtx_destroy(&handler->lock);
 	free(handler);
 }
 
@@ -351,10 +305,5 @@ int event_handler_set_callback(EventHandler handler, EventCallback callback)
 {
 	handler->callback = callback;
 
-	return 0;
-}
-
-int event_handler_set_timer(EventHandler handler, int fd, void *arg, EventCallback callback)
-{
 	return 0;
 }

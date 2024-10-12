@@ -3,22 +3,19 @@
 
 #include <stdbool.h>
 
+#include "event-object.h"
+
 typedef struct event_handler *EventHandler;
-typedef void (*EventCallback)(int fd, void *arg);
 
 EventHandler event_handler_create(void);
-void event_handler_destroy(EventHandler handler);
+void event_handler_destroy(EventHandler );
 
-// thread-safe
-int event_handler_add(EventHandler handler, bool edge_trigger,
-		      int fd, void *arg, EventCallback callback);
-int event_handler_del(EventHandler handler, int fd);
+int event_handler_add(EventHandler , EventObject );
+int event_handler_del(EventHandler , EventObject );
 
-int event_handler_start(EventHandler handler);
-int event_handler_stop(EventHandler handler);
+int event_handler_start(EventHandler );
+int event_handler_stop(EventHandler );
 
-int event_handler_set_callback(EventHandler handler, EventCallback callback);
-int event_handler_set_timer(EventHandler handler,
-			    int fd, void *arg, EventCallback callback);
+int event_handler_set_callback(EventHandler , EventCallback );
 
 #endif
