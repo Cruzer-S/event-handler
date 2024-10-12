@@ -1,6 +1,5 @@
 #include "event-handler.h"
 
-#include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <threads.h>
@@ -192,10 +191,6 @@ static int event_worker(void *arg)
 
 	if (handler->state == EVENT_HANDLER_ERROR)
 		goto DESTROY_MTX;
-
-	printf("start worker thread(%ld) - epfd: %d - evfd: %d\n",
-		thrd_current() % 10000, worker->epfd, worker->evfd
-	);
 
 	while (handler->state == EVENT_HANDLER_RUNNING)
 	{
