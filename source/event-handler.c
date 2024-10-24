@@ -48,6 +48,8 @@ struct event_object {
 	EventCallback callback;
 	void *arg;
 
+	int refcnt;
+
 	struct list list;
 };
 
@@ -122,6 +124,8 @@ int event_handler_del(EventHandler handler, EventObject object)
 	list_init_head(&object->list);
 	list_add(&worker->to_delete, &object->list);
 
+	event_object_inc_refcnt(object);
+
 	mtx_unlock(&worker->lock);
 
 	eventfd_write(worker->evfd, 1);
@@ -140,6 +144,7 @@ static void handle_event(EventWorker worker, struct epoll_event *event)
 					struct event_object, list)
 		{
 			epoll_ctl(worker->epfd, EPOLL_CTL_DEL, object->fd, 0);
+			event_object_destroy(object);
 			worker->nobject--;
 		}
 

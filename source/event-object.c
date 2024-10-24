@@ -15,6 +15,8 @@ struct event_object {
 	EventCallback callback;
 	void *arg;
 
+	int refcnt;
+
 	struct list list;
 };
 
@@ -34,6 +36,8 @@ EventObject event_object_create(int fd, bool edge_triggered,
 
 	object->callback = callback;
 	object->arg = arg;
+
+	object->refcnt = 1;
 
 	list_init_head(&object->list);
 
@@ -55,8 +59,14 @@ int event_object_set_timer(EventObject object, int timeout)
 	return 0;
 }
 
+void event_object_inc_refcnt(EventObject object)
+{
+	object->refcnt++;
+}
+
 void event_object_destroy(EventObject object)
 {
-	free(object);
+	if (--object->refcnt <= 0)
+		free(object);
 }
 

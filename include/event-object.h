@@ -13,4 +13,6 @@ void *event_object_get_arg(EventObject );
 int event_object_set_timer(EventObject , int timeout);
 void event_object_destroy(EventObject );
 
+void event_object_inc_refcnt(EventObject object);
+
 #endif
