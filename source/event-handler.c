@@ -251,8 +251,10 @@ static int event_worker(void *arg)
 	{
 		list_del(&object->list);
 
-		if (object->callback)
+		if (object->callback) {
 			object->callback(object);
+			event_object_destroy(object);
+		}
 
 		worker->nobject--;
 	}
