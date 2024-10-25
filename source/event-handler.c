@@ -250,6 +250,10 @@ static int event_worker(void *arg)
 			 	struct event_object, list)
 	{
 		list_del(&object->list);
+
+		if (object->callback)
+			object->callback(object);
+
 		worker->nobject--;
 	}
 
