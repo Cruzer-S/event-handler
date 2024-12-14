@@ -16,6 +16,4 @@ int event_handler_del(EventHandler , EventObject );
 int event_handler_start(EventHandler );
 int event_handler_stop(EventHandler );
 
-int event_handler_set_callback(EventHandler , EventCallback );
-
 #endif
