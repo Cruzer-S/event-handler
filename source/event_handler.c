@@ -10,8 +10,6 @@
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 
-#include "Cruzer-S/list/list.h"
-
 #define EVENT_SIZE 1024
 
 #define EPOLL_ADD(EPFD, FD, PTR) 				\
@@ -27,16 +25,6 @@
 		EPFD, EPOLL_CTL_DEL, FD, NULL			\
 	)
 
-typedef struct event *Event;
-
-struct event {
-	int fd;
-	EventCallback callback;
-	void *arg;
-
-	struct list list;
-};
-
 struct event_handler {
 	pthread_t worker;
 	bool is_running;
@@ -45,9 +33,6 @@ struct event_handler {
 	int evfd;
 
 	struct list events;
-	struct list to_delete;
-
-	pthread_spinlock_t event_lock;
 };
 
 EventHandler event_handler_create(void)
@@ -59,9 +44,6 @@ EventHandler event_handler_create(void)
 		goto RETURN_NULL;
 
 	list_init_head(&handler->events);
-	list_init_head(&handler->to_delete);
-
-	pthread_spin_init(&handler->event_lock, PTHREAD_PROCESS_PRIVATE);
 
 	handler->epfd = epoll_create(1);
 	if (handler->epfd == -1)
@@ -82,30 +64,12 @@ FREE_HANDLER:	free(handler);
 RETURN_NULL:	return NULL;
 }
 
-int event_handler_add(EventHandler handler, int fd,
-		      EventCallback callback, void *arg)
+int event_handler_add(EventHandler handler, Event event)
 {
-	Event event;
-
-	event = malloc(sizeof(struct event));
-	if (event == NULL)
-		return -1;
-
-	event->fd = fd;
-	event->callback = callback;
-	event->arg = arg;
-
-	if (EPOLL_ADD(handler->epfd, fd, event) != 0) {
-		free(event);
-		return -1;
-	}
-
-	pthread_spin_lock(&handler->event_lock);
-	list_init_head(&event->list);
 	list_add(&handler->events, &event->list);
-	pthread_spin_unlock(&handler->event_lock);
 
-	eventfd_write(handler->evfd, 1);
+	if (EPOLL_ADD(handler->epfd, event->fd, event) != 0)
+		return -1;
 
 	return 0;
 }
@@ -114,7 +78,6 @@ static void *event_handler(void *args)
 {
 	struct epoll_event events[EVENT_SIZE];
 	EventHandler handler = args;
-	bool do_cleanup = false;
 
 	while ( handler->is_running )
 	{
@@ -130,30 +93,12 @@ static void *event_handler(void *args)
 			Event event = events[i].data.ptr;
 
 			if (events[i].data.ptr == handler) {
-				do_cleanup = true;
+				eventfd_t value;
+				eventfd_read(handler->evfd, &value);
 				continue;
 			}
 
 			event->callback(event->fd, event->arg);
-		}
-
-		if (do_cleanup) {
-			LIST_FOREACH_ENTRY_SAFE(&handler->to_delete, event,
-						struct event, list) 
-			{
-				pthread_spin_lock(&handler->event_lock);
-				list_del(&event->list);
-				EPOLL_DEL(handler->epfd, event->fd);
-				pthread_spin_unlock(&handler->event_lock);
-
-				free(event);
-			}
-
-			eventfd_t value;
-			eventfd_write(handler->evfd, 0);
-			eventfd_read(handler->evfd, &value);
-
-			do_cleanup = false;
 		}
 	}
 
@@ -181,24 +126,12 @@ int event_handler_stop(EventHandler handler)
 	return 0;
 }
 
-int event_handler_del(EventHandler handler, int fd)
+int event_handler_del(EventHandler handler, Event event)
 {
-	pthread_spin_lock(&handler->event_lock);
+	list_del(&event->list);
+	EPOLL_DEL(handler->epfd, event->fd);
 
-	LIST_FOREACH_ENTRY_SAFE(&handler->events, event, struct event, list)
-	{
-		if (event->fd == fd) {
-			list_del(&event->list);
-			list_init_head(&event->list);
-			list_add(&handler->to_delete, &event->list);
-			pthread_spin_unlock(&handler->event_lock);
-			return 0;
-		}
-	}
-
-	pthread_spin_unlock(&handler->event_lock);
-
-	return -1;
+	return 0;
 }
 
 void event_handler_destroy(EventHandler handler)
@@ -207,8 +140,6 @@ void event_handler_destroy(EventHandler handler)
 
 	close(handler->evfd);
 	close(handler->epfd);
-
-	pthread_spin_destroy(&handler->event_lock);
 
 	free(handler);
 }

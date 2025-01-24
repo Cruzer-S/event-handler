@@ -37,6 +37,7 @@ typedef struct pipe {
 	bool closed;
 
 	Handler handler;
+	Event event;
 } *Pipe;
 
 struct handler handlers[MAX_HANDLER];
@@ -58,7 +59,8 @@ atomic_int total_reads = 0;
 
 void callback(int fd, void *args)
 {
-	Handler handler = args;
+	Pipe pipe = args;
+	Handler handler = pipe->handler;
 	char buffer[BUFSIZ];
 	int readlen = 0, retval;
 
@@ -78,7 +80,7 @@ void callback(int fd, void *args)
 		if (retval == 0) {
 			print("\tread close (EOF) signal from %3d", fd);
 
-			event_handler_del(handler->handler, fd);
+			event_handler_del(handler->handler, pipe->event);
 			close(fd);
 
 			handler->free++;
@@ -137,6 +139,8 @@ void *worker_thread(void *_)
 
 int main(int argc, char *argv[])
 {
+	Event event;
+
 	for (int i = 0; i < MAX_HANDLER; i++) {
 		Handler hdr = &handlers[i];
 
@@ -154,8 +158,16 @@ int main(int argc, char *argv[])
 
 		hdr->alloc++;
 
-		event_handler_add(hdr->handler, pipe->pfd[0],
-				  callback, hdr);
+		event = event_create(pipe->pfd[0], callback, hdr);
+		if ( !event ) {
+			close(pipe->pfd[0]);
+			close(pipe->pfd[1]);
+			continue;
+		} else {
+			pipe->event = event;
+		}
+
+		event_handler_add(hdr->handler, event);
 	}
 
 	for (int i = 0; i < MAX_HANDLER; i++)
@@ -178,7 +190,7 @@ int main(int argc, char *argv[])
 		if (pipe->closed)
 			continue;
 
-		event_handler_del(pipe->handler->handler, pipe->pfd[0]);
+		event_handler_del(pipe->handler->handler, pipe->event);
 		pipe->handler->free++;
 		total_pipes--;
 
