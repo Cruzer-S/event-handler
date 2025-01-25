@@ -143,3 +143,8 @@ void event_handler_destroy(EventHandler handler)
 
 	free(handler);
 }
+
+struct list *event_handler_get_events(EventHandler handler)
+{
+	return &handler->events;
+}

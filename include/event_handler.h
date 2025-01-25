@@ -14,6 +14,6 @@ int event_handler_del(EventHandler , Event );
 int event_handler_start(EventHandler );
 int event_handler_stop(EventHandler );
 
-struct list event_handler_get_events(EventHandler );
+struct list *event_handler_get_events(EventHandler );
 
 #endif
