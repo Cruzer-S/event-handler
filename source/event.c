@@ -16,7 +16,7 @@ Event event_create(int fd, EventCallback callback, void *arg)
 
 	list_init_head(&event->list);
 
-	return 0;
+	return event;
 }
 
 void event_destroy(Event event)
